@@ -1,0 +1,9 @@
+node_modules/
+data/*.db
+data/memory-store.json
+data/puppeteer-profiles/
+logs/
+*.log
+.env
+.DS_Store
+Thumbs.db

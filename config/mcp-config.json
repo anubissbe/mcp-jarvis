@@ -1,0 +1,79 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/filesystem-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "fetch": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/fetch-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "memory": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/memory-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "git": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/git-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "sqlite": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/sqlite-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "puppeteer": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/puppeteer-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-playwright",
+        "--headless",
+        "--max-pages=5"
+      ]
+    },
+    "everything": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-everything"]
+    },
+    "web-search": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/web-search-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "docker": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/docker-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "system-monitor": {
+      "command": "node",
+      "args": ["/opt/MCP/servers/system-monitor-server.js"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  }
+}

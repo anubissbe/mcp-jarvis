@@ -1,0 +1,20 @@
+{
+  "name": "mcp-servers-collection",
+  "version": "1.0.0",
+  "description": "Collection of MCP servers for enhanced capabilities",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install-all": "node scripts/install-all.js",
+    "setup": "node scripts/setup.js",
+    "test-servers": "node scripts/test-servers.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^22.10.0"
+  }
+}
