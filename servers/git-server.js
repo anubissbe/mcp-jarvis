@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+import { isPathAllowed } from './config.js';
 
 const execAsync = promisify(exec);
 
@@ -17,12 +18,8 @@ const server = new Server({
   }
 });
 
-const allowedRepos = ['/opt/MCP', '/home', '/tmp'];
-
-function isRepoAllowed(repoPath) {
-  const normalized = path.resolve(repoPath);
-  return allowedRepos.some(allowed => normalized.startsWith(path.resolve(allowed)));
-}
+// Use the same path checking as filesystem operations
+const isRepoAllowed = isPathAllowed;
 
 server.setRequestHandler('tools/list', async () => ({
   tools: [

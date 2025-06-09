@@ -2,6 +2,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { isDomainAllowed } from './config.js';
 
 const server = new Server({
   name: 'fetch',
@@ -11,31 +12,6 @@ const server = new Server({
     tools: {}
   }
 });
-
-const allowedDomains = [
-  'api.github.com',
-  'api.openai.com',
-  'api.anthropic.com',
-  'jsonplaceholder.typicode.com',
-  'googleapis.com',
-  'api.stackexchange.com',
-  'api.weather.gov',
-  'api.wikipedia.org'
-];
-
-function isDomainAllowed(url) {
-  try {
-    const hostname = new URL(url).hostname;
-    return allowedDomains.some(domain => {
-      if (domain.startsWith('*.')) {
-        return hostname.endsWith(domain.slice(2));
-      }
-      return hostname === domain || hostname.endsWith('.' + domain);
-    });
-  } catch {
-    return false;
-  }
-}
 
 server.setRequestHandler('tools/list', async () => ({
   tools: [

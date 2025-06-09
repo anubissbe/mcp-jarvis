@@ -1,0 +1,193 @@
+{
+  "github.copilot.chat.mcp.enabled": true,
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/filesystem-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/fetch-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/memory-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "git": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/git-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "sqlite": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/sqlite-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "puppeteer": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/puppeteer-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "webSearch": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/web-search-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "docker": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/docker-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "systemMonitor": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/system-monitor-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "time": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/time-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "nodeSandbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/node-sandbox-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "pythonSandbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/python-sandbox-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "selfLearning": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/self-learning-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "imageGeneration": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/image-gen-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "everything": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/everything-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "sequentialThinking": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/sequential-thinking-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "sequentialThinkingTools": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/MCP/servers/sequential-thinking-tools-server.js"
+      ],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "calculator": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@wrtnlabs/calculator-mcp"
+      ]
+    },
+    "markmap": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@jinzcdev/markmap-mcp-server",
+        "--output",
+        "./data/markmap-output"
+      ]
+    }
+  }
+}

@@ -1,9 +1,50 @@
+# Dependencies
 node_modules/
-data/*.db
-data/memory-store.json
-data/puppeteer-profiles/
-logs/
-*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
 .env
+.env.local
+.env.*.local
+
+# Data and logs
+data/
+logs/
+*.db
+*.db-journal
+memory-store.json
+
+# User profiles
+puppeteer-profiles/
+learned-knowledge/
+markmap-output/
+
+# System files
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE files (except MCP configs)
+.vscode/*
+!.vscode/mcp.json
+.idea/
+*.sublime-*
+.cursor/*
+!.cursor/mcp.json
+
+# Backup files
+*.backup
+*.backup-*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+out/

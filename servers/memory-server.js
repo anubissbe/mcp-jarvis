@@ -4,9 +4,13 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { MEMORY_STORE_PATH, MCP_DATA_DIR } from './config.js';
 
-const MEMORY_FILE = '/opt/MCP/data/memory-store.json';
+const MEMORY_FILE = MEMORY_STORE_PATH;
 let memoryStore = {};
+
+// Ensure data directory exists
+await fs.mkdir(MCP_DATA_DIR, { recursive: true }).catch(() => {});
 
 // Load existing memory
 try {

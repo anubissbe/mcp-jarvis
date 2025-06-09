@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { isPathAllowed, ALLOWED_PATHS } from './config.js';
 
 const server = new Server({
   name: 'filesystem',
@@ -13,13 +14,6 @@ const server = new Server({
     tools: {}
   }
 });
-
-const allowedPaths = ['/home', '/opt', '/tmp', '/var/log'];
-
-function isPathAllowed(filePath) {
-  const normalizedPath = path.resolve(filePath);
-  return allowedPaths.some(allowed => normalizedPath.startsWith(path.resolve(allowed)));
-}
 
 server.setRequestHandler('tools/list', async () => ({
   tools: [

@@ -6,6 +6,7 @@ import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs/promises';
+import { DB_PATHS, MCP_DATA_DIR } from './config.js';
 
 const server = new Server({
   name: 'sqlite',
@@ -16,14 +17,10 @@ const server = new Server({
   }
 });
 
-const databases = {
-  main: '/opt/MCP/data/main.db',
-  analytics: '/opt/MCP/data/analytics.db',
-  logs: '/opt/MCP/data/logs.db'
-};
+const databases = DB_PATHS;
 
 // Ensure data directory exists
-await fs.mkdir('/opt/MCP/data', { recursive: true });
+await fs.mkdir(MCP_DATA_DIR, { recursive: true });
 
 server.setRequestHandler('tools/list', async () => ({
   tools: [
