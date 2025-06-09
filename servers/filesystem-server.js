@@ -1,137 +1,273 @@
 #!/usr/bin/env node
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { z } from 'zod';
 import { isPathAllowed, ALLOWED_PATHS } from './config.js';
 
-const server = new Server({
-  name: 'filesystem',
+// Create MCP server instance
+const server = new McpServer({
+  name: 'filesystem-server',
   version: '1.0.0',
-}, {
-  capabilities: {
-    tools: {}
-  }
 });
 
-server.setRequestHandler('tools/list', async () => ({
-  tools: [
-    {
-      name: 'read_file',
-      description: 'Read a file from the filesystem',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'File path to read' }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: 'write_file',
-      description: 'Write content to a file',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'File path to write' },
-          content: { type: 'string', description: 'Content to write' }
-        },
-        required: ['path', 'content']
-      }
-    },
-    {
-      name: 'list_directory',
-      description: 'List contents of a directory',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Directory path' }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: 'create_directory',
-      description: 'Create a directory',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Directory path to create' }
-        },
-        required: ['path']
-      }
-    },
-    {
-      name: 'delete_file',
-      description: 'Delete a file',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'File path to delete' }
-        },
-        required: ['path']
-      }
+// Add filesystem tools using the new SDK API
+server.tool(
+  'read_file',
+  {
+    path: z.string().describe('File path to read'),
+  },
+  async ({ path: filePath }) => {
+    if (!isPathAllowed(filePath)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Path must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
     }
-  ]
-}));
 
-server.setRequestHandler('tools/call', async (request) => {
-  const { name, arguments: args } = request.params;
-  
-  if (!isPathAllowed(args.path)) {
-    throw new Error(`Access denied: ${args.path} is outside allowed paths`);
-  }
-  
-  try {
-    let result;
-    
-    switch (name) {
-      case 'read_file':
-        result = await fs.readFile(args.path, 'utf-8');
-        break;
-        
-      case 'write_file':
-        await fs.writeFile(args.path, args.content, 'utf-8');
-        result = `File written successfully: ${args.path}`;
-        break;
-        
-      case 'list_directory':
-        const files = await fs.readdir(args.path);
-        result = files.join('\n');
-        break;
-        
-      case 'create_directory':
-        await fs.mkdir(args.path, { recursive: true });
-        result = `Directory created: ${args.path}`;
-        break;
-        
-      case 'delete_file':
-        await fs.unlink(args.path);
-        result = `File deleted: ${args.path}`;
-        break;
-        
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: content,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error reading file: ${error.message}`,
+          },
+        ],
+      };
     }
-    
-    return {
-      content: [{
-        type: 'text',
-        text: result
-      }]
-    };
-  } catch (error) {
-    return {
-      content: [{
-        type: 'text',
-        text: `Error: ${error.message}`
-      }],
-      isError: true
-    };
   }
-});
+);
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error('Filesystem MCP server running on stdio');
+server.tool(
+  'write_file',
+  {
+    path: z.string().describe('File path to write'),
+    content: z.string().describe('Content to write to the file'),
+  },
+  async ({ path: filePath, content }) => {
+    if (!isPathAllowed(filePath)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Path must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, 'utf-8');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully wrote to ${filePath}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error writing file: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'list_directory',
+  {
+    path: z.string().describe('Directory path to list'),
+  },
+  async ({ path: dirPath }) => {
+    if (!isPathAllowed(dirPath)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Path must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      const files = entries
+        .map(entry => `${entry.isDirectory() ? '[DIR]' : '[FILE]'} ${entry.name}`)
+        .join('\n');
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: files || 'Directory is empty',
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error listing directory: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'create_directory',
+  {
+    path: z.string().describe('Directory path to create'),
+  },
+  async ({ path: dirPath }) => {
+    if (!isPathAllowed(dirPath)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Path must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully created directory ${dirPath}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error creating directory: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'delete_file',
+  {
+    path: z.string().describe('File path to delete'),
+  },
+  async ({ path: filePath }) => {
+    if (!isPathAllowed(filePath)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Path must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      await fs.unlink(filePath);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully deleted ${filePath}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error deleting file: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'move_file',
+  {
+    source: z.string().describe('Source file path'),
+    destination: z.string().describe('Destination file path'),
+  },
+  async ({ source, destination }) => {
+    if (!isPathAllowed(source) || !isPathAllowed(destination)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Access denied. Paths must be within allowed directories: ${ALLOWED_PATHS.join(', ')}`,
+          },
+        ],
+      };
+    }
+
+    try {
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.rename(source, destination);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully moved ${source} to ${destination}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error moving file: ${error.message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+async function runServer() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('Filesystem MCP server running on stdio');
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runServer().catch(console.error);
+}

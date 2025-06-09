@@ -203,24 +203,340 @@ node scripts/setup.js  # Auto-detects WSL and configures accordingly
 
 All core features work without Docker. Only the advanced code sandbox features require Docker.
 
+## 🐳 Docker Deployment
+
+Run all MCP servers in a single container with unified API access.
+
+### Quick Start
+```bash
+# Clone and setup
+git clone https://github.com/anubissbe/mcp-jarvis.git
+cd mcp-jarvis
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Test the API
+curl http://localhost:3000/health
+curl http://localhost:3000/api/servers
+```
+
+### API Access
+- **REST API**: `http://localhost:3000/api/*`
+- **WebSocket**: `ws://localhost:3000`
+- **Health Check**: `http://localhost:3000/health`
+- **Documentation**: `http://localhost:3000/api`
+
+See `/api/README.md` for complete API documentation.
+
+### Filesystem Access Configuration
+
+**⚠️ Important**: By default, the Docker container only has access to its internal filesystem (`/app/data`, `/tmp`). To access your host filesystem, you need to configure volume mounts.
+
+#### Linux/macOS Configuration
+
+Edit `docker-compose.yml` to mount host directories:
+
+```yaml
+services:
+  mcp-jarvis:
+    volumes:
+      # Default container volumes
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      
+      # Host filesystem access (choose what you need)
+      - ~/projects:/app/projects          # Your development projects
+      - ~/Documents:/app/documents:ro     # Documents (read-only)
+      - ~/Downloads:/app/downloads        # Downloads folder
+      - /var/log:/app/host-logs:ro        # System logs (read-only)
+      
+      # Advanced: Full home directory access
+      - ~/:/app/home                      # Full home directory
+      
+      # Advanced: System-wide access (less secure)
+      - /:/app/host:ro                    # Entire filesystem (read-only)
+```
+
+#### Windows Configuration
+
+```yaml
+services:
+  mcp-jarvis:
+    volumes:
+      # Default container volumes
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      
+      # Windows host filesystem access
+      - C:\Users\%USERNAME%\Documents:/app/documents
+      - C:\Users\%USERNAME%\Projects:/app/projects
+      - C:\temp:/app/temp
+      
+      # Full user directory
+      - C:\Users\%USERNAME%:/app/home
+```
+
+#### WSL Configuration
+
+```yaml
+services:
+  mcp-jarvis:
+    volumes:
+      # WSL filesystem
+      - ~/:/app/home
+      - /mnt/c/Users:/app/windows-users:ro
+      
+      # Specific directories
+      - /mnt/c/projects:/app/projects
+      - /mnt/c/temp:/app/temp
+```
+
+#### Environment Variable Configuration
+
+Update the `ALLOWED_PATHS` environment variable to match your mounted volumes:
+
+```yaml
+environment:
+  # Match your volume mounts
+  - ALLOWED_PATHS=/app/data,/app/projects,/app/documents,/app/home
+```
+
+#### Security Levels
+
+**🔒 Secure (Recommended)**
+```yaml
+volumes:
+  - ~/projects:/app/projects           # Only specific directories
+  - ~/Documents:/app/documents:ro      # Read-only where possible
+environment:
+  - ALLOWED_PATHS=/app/data,/app/projects,/app/documents
+```
+
+**🔓 Developer Mode**
+```yaml
+volumes:
+  - ~/:/app/home                       # Full home directory
+environment:
+  - ALLOWED_PATHS=/app/home,/app/data,/tmp
+```
+
+**⚠️ Full Access (Use with caution)**
+```yaml
+volumes:
+  - /:/app/host                        # Entire filesystem
+environment:
+  - ALLOWED_PATHS=/app/host,/app/data
+```
+
+### MCP Server Configuration Requirements
+
+Different MCP servers have different filesystem and configuration needs:
+
+#### Filesystem-Dependent Servers
+- **filesystem-server**: Requires `ALLOWED_PATHS` configuration
+- **git-server**: Needs access to git repositories
+- **sqlite-server**: Requires database file locations
+- **memory-server**: Needs persistent storage location
+- **puppeteer-server**: Requires screenshot/download directories
+
+#### Network-Dependent Servers  
+- **fetch-server**: Requires `ALLOWED_DOMAINS` configuration
+- **web-search-server**: Needs internet access
+- **self-learning-server**: Requires both network and filesystem access
+
+#### External Service Servers
+- **image-generation-server**: Requires `IMAGE_GEN_API_URL` configuration
+- **docker-server**: Needs Docker socket access (see below)
+
+#### System-Dependent Servers
+- **system-monitor-server**: Requires host system access
+- **python-sandbox-server**: Needs Deno installation
+
+### Docker Socket Access (for docker-server)
+
+To use the Docker server from within the container:
+
+```yaml
+services:
+  mcp-jarvis:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+```
+
+### Complete Configuration Examples
+
+**See `docker-compose.examples.yml` for complete platform-specific configurations.**
+
+**Quick Linux Example:**
+
+```yaml
+version: '3.8'
+services:
+  mcp-jarvis:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Core settings
+      - NODE_ENV=production
+      - PORT=3000
+      
+      # Filesystem access
+      - ALLOWED_PATHS=/app/data,/app/home,/app/projects,/tmp
+      
+      # Network access
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org,docs.python.org,nodejs.org
+      
+      # External services
+      - IMAGE_GEN_API_URL=http://host.docker.internal:8000
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      
+    volumes:
+      # Persistent data
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      
+      # Host filesystem access
+      - ~/:/app/home
+      - ~/projects:/app/projects
+      - /tmp:/app/tmp
+      
+      # Docker access
+      - /var/run/docker.sock:/var/run/docker.sock
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mcp-data:
+  mcp-logs:
+```
+
+### Testing Filesystem Access
+
+After configuration, test filesystem access:
+
+```bash
+# Start a filesystem server
+curl -X POST http://localhost:3000/api/servers/filesystem/start
+
+# List your home directory
+curl -X POST http://localhost:3000/api/servers/filesystem/tools/list_directory \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"path": "/app/home"}}'
+
+# Read a file
+curl -X POST http://localhost:3000/api/servers/filesystem/tools/read_file \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"path": "/app/home/.bashrc"}}'
+```
+
 ## 🔧 Configuration
 
 The MCP servers are configured in `config/mcp-config.json`. Each server can be enabled/disabled by adding or removing it from the configuration.
+
+### MCP Server Configuration Matrix
+
+| Server | Filesystem Access | Network Access | External Dependencies | Special Config |
+|--------|-------------------|----------------|----------------------|----------------|
+| **filesystem** | ✅ Required | ❌ No | ❌ None | `ALLOWED_PATHS` |
+| **fetch** | ❌ No | ✅ Required | ❌ None | `ALLOWED_DOMAINS` |
+| **memory** | ✅ Optional | ❌ No | ❌ None | Persistent storage |
+| **git** | ✅ Required | ❌ No | ✅ Git binary | Git repositories |
+| **sqlite** | ✅ Required | ❌ No | ❌ None | Database files |
+| **puppeteer** | ✅ Optional | ✅ Optional | ✅ Chromium | Screenshots/downloads |
+| **web-search** | ❌ No | ✅ Required | ❌ None | Internet access |
+| **docker** | ❌ No | ❌ No | ✅ Docker socket | `/var/run/docker.sock` |
+| **system-monitor** | ❌ No | ❌ No | ✅ Host system | System metrics |
+| **time** | ❌ No | ❌ No | ❌ None | No special config |
+| **node-sandbox** | ✅ Optional | ❌ No | ❌ None | Code execution |
+| **python-sandbox** | ✅ Optional | ❌ No | ✅ Deno | Python execution |
+| **self-learning** | ✅ Required | ✅ Required | ❌ None | Docs + storage |
+| **image-generation** | ✅ Optional | ✅ Required | ✅ External API | `IMAGE_GEN_API_URL` |
+| **everything** | ✅ Optional | ✅ Optional | ❌ None | Demo/testing |
+| **sequential-thinking** | ❌ No | ❌ No | ❌ None | No special config |
 
 ### Environment Variables
 
 Configure servers via `.env` file:
 
 ```bash
-# Allowed paths for file operations (defaults to home directory)
-ALLOWED_PATHS=~/,/tmp,/var/log
+# Filesystem access (required for filesystem, git, sqlite, memory, puppeteer, self-learning)
+ALLOWED_PATHS=~/,/tmp,/var/log,~/projects,~/Documents
 
-# Allowed domains for web requests
-ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org
+# Network access (required for fetch, web-search, self-learning, image-generation)
+ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org,docs.python.org,nodejs.org
 
 # External services (optional)
-IMAGE_GEN_API_URL=http://localhost:8000  # For AI image generation
-DENO_PATH=/path/to/deno                   # For Python sandbox
+IMAGE_GEN_API_URL=http://localhost:8000        # For image generation server
+DENO_PATH=/path/to/deno                         # For Python sandbox server
+
+# Docker integration (for docker server)
+DOCKER_HOST=unix:///var/run/docker.sock        # Docker socket access
+
+# Resource limits
+NODE_MEMORY_LIMIT=2048                          # Memory limit in MB
+PUPPETEER_HEADLESS=true                         # Browser mode
+MCP_LOGS_DIR=./logs                            # Log directory
+```
+
+### Platform-Specific Configuration
+
+#### 🐧 Linux Configuration
+```bash
+# Native installation
+ALLOWED_PATHS=~/,/tmp,/var/log,~/projects
+ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org
+DOCKER_HOST=unix:///var/run/docker.sock
+
+# Container volumes needed
+- ~/:/app/home                    # Home directory access
+- /var/run/docker.sock:/var/run/docker.sock  # Docker access
+- /tmp:/app/tmp                   # Temporary files
+```
+
+#### 🍎 macOS Configuration  
+```bash
+# Similar to Linux but with macOS paths
+ALLOWED_PATHS=~/,/tmp,/Users/$(whoami)/Documents
+DOCKER_HOST=unix:///var/run/docker.sock
+
+# Container volumes
+- ~/:/app/home
+- /var/run/docker.sock:/var/run/docker.sock
+```
+
+#### 🪟 Windows Configuration
+```bash
+# Windows paths (use forward slashes)
+ALLOWED_PATHS=C:/Users/%USERNAME%,C:/temp
+DOCKER_HOST=npipe:////./pipe/docker_engine
+
+# Container volumes (Windows Docker Desktop)
+- C:\Users\%USERNAME%:/app/home
+- \\.\pipe\docker_engine:\\.\pipe\docker_engine
+```
+
+#### 🐧🪟 WSL Configuration
+```bash
+# WSL can access both Linux and Windows filesystems
+ALLOWED_PATHS=/home/user,/mnt/c/Users,/tmp
+DOCKER_HOST=unix:///var/run/docker.sock
+
+# Container volumes
+- ~/:/app/wsl-home                           # WSL home
+- /mnt/c/Users:/app/windows-users           # Windows users
+- /var/run/docker.sock:/var/run/docker.sock # Docker access
+```
+
+### Security Features
 
 # Resource limits
 NODE_MEMORY_LIMIT=2048                    # MB

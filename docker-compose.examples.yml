@@ -1,0 +1,205 @@
+# Docker Compose Configuration Examples for MCP Jarvis
+# Copy the appropriate section below to your docker-compose.yml
+
+# =============================================================================
+# LINUX DEVELOPMENT CONFIGURATION (Recommended)
+# =============================================================================
+version: '3.8'
+services:
+  mcp-jarvis-linux:
+    build: .
+    container_name: mcp-jarvis-linux
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Filesystem access
+      - ALLOWED_PATHS=/app/data,/app/home,/app/projects,/tmp
+      # Network access  
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org,docs.python.org,nodejs.org,developer.mozilla.org
+      # Optional services
+      - IMAGE_GEN_API_URL=http://host.docker.internal:8000
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      # Persistent container data
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # Host filesystem access
+      - ~/:/app/home                              # Full home directory
+      - ~/projects:/app/projects                  # Development projects
+      - /tmp:/app/tmp                            # Temporary files
+      # Docker access (for docker-server)
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# =============================================================================
+# MACOS CONFIGURATION
+# =============================================================================
+  mcp-jarvis-macos:
+    build: .
+    container_name: mcp-jarvis-macos
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ALLOWED_PATHS=/app/data,/app/home,/app/documents,/tmp
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org,docs.python.org
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      - ~/:/app/home
+      - ~/Documents:/app/documents:ro             # Read-only documents
+      - ~/Downloads:/app/downloads
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+# =============================================================================
+# WINDOWS CONFIGURATION
+# =============================================================================
+  mcp-jarvis-windows:
+    build: .
+    container_name: mcp-jarvis-windows
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ALLOWED_PATHS=/app/data,/app/home,/app/projects,/tmp
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org
+      # Windows Docker Desktop uses named pipes
+      - DOCKER_HOST=npipe:////./pipe/docker_engine
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # Windows paths (adjust USERNAME as needed)
+      - C:\Users\%USERNAME%:/app/home
+      - C:\Users\%USERNAME%\Documents:/app/documents:ro
+      - C:\temp:/app/tmp
+    restart: unless-stopped
+
+# =============================================================================
+# WSL (Windows Subsystem for Linux) CONFIGURATION
+# =============================================================================
+  mcp-jarvis-wsl:
+    build: .
+    container_name: mcp-jarvis-wsl
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ALLOWED_PATHS=/app/data,/app/wsl-home,/app/windows-users,/tmp
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # WSL filesystem
+      - ~/:/app/wsl-home
+      # Windows filesystem access from WSL
+      - /mnt/c/Users:/app/windows-users:ro
+      - /mnt/c/temp:/app/temp
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+# =============================================================================
+# SECURE CONFIGURATION (Limited Access)
+# =============================================================================
+  mcp-jarvis-secure:
+    build: .
+    container_name: mcp-jarvis-secure
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Minimal filesystem access
+      - ALLOWED_PATHS=/app/data,/app/projects
+      # Limited domains
+      - ALLOWED_DOMAINS=github.com,npmjs.com
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # Only specific directories
+      - ~/projects:/app/projects:ro              # Read-only projects
+      - ~/Documents/safe-docs:/app/docs:ro       # Read-only docs
+    restart: unless-stopped
+    # Enhanced security
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+
+# =============================================================================
+# FULL ACCESS CONFIGURATION (Use with caution)
+# =============================================================================
+  mcp-jarvis-full:
+    build: .
+    container_name: mcp-jarvis-full
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Full filesystem access
+      - ALLOWED_PATHS=/app/host,/app/data,/tmp
+      # All domains allowed (use specific domains in production)
+      - ALLOWED_DOMAINS=*
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # DANGEROUS: Full filesystem access
+      - /:/app/host
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    privileged: true                             # DANGEROUS: Full privileges
+
+# =============================================================================
+# DEVELOPMENT CONFIGURATION (Hot Reload)
+# =============================================================================
+  mcp-jarvis-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: base
+    container_name: mcp-jarvis-dev
+    ports:
+      - "3000:3000"
+      - "9229:9229"                              # Node.js debugger port
+    environment:
+      - NODE_ENV=development
+      - ALLOWED_PATHS=/app/data,/app/home,/app/source,/tmp
+      - ALLOWED_DOMAINS=github.com,npmjs.com,localhost
+    volumes:
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      - ~/:/app/home
+      # Mount source code for development
+      - .:/app/source
+      - ./servers:/app/servers
+      - ./api:/app/api
+    restart: "no"
+    command: ["node", "--inspect=0.0.0.0:9229", "api/mcp-api-server.js"]
+
+# =============================================================================
+# SHARED VOLUMES
+# =============================================================================
+volumes:
+  mcp-data:
+    driver: local
+  mcp-logs:
+    driver: local
+
+networks:
+  default:
+    name: mcp-network

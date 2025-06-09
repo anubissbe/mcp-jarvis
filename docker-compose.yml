@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  mcp-jarvis:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-jarvis-api
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Default paths (containers have limited filesystem access)
+      - ALLOWED_PATHS=/app/data,/tmp
+      # Safe default domains
+      - ALLOWED_DOMAINS=github.com,npmjs.com,pypi.org,docs.python.org,nodejs.org,developer.mozilla.org
+      # Optional services (uncomment if available)
+      # - IMAGE_GEN_API_URL=http://host.docker.internal:8000
+    volumes:
+      # Persist data outside container
+      - mcp-data:/app/data
+      - mcp-logs:/app/logs
+      # Optional: mount host directories
+      # - ./host-workspace:/app/workspace:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+
+volumes:
+  mcp-data:
+    driver: local
+  mcp-logs:
+    driver: local
+
+networks:
+  default:
+    name: mcp-network

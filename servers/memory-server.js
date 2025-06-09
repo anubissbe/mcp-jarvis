@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import fs from 'fs/promises';
 import path from 'path';
+import { z } from 'zod';
 import { MEMORY_STORE_PATH, MCP_DATA_DIR } from './config.js';
 
 const MEMORY_FILE = MEMORY_STORE_PATH;
@@ -20,139 +21,142 @@ try {
   // File doesn't exist yet, start with empty store
 }
 
-const server = new Server({
-  name: 'memory',
-  version: '1.0.0',
-}, {
-  capabilities: {
-    tools: {}
-  }
-});
-
 // Auto-save function
-setInterval(async () => {
+async function saveMemory() {
   try {
     await fs.mkdir(path.dirname(MEMORY_FILE), { recursive: true });
     await fs.writeFile(MEMORY_FILE, JSON.stringify(memoryStore, null, 2));
   } catch (error) {
     console.error('Failed to save memory:', error);
   }
-}, 5000);
+}
 
-server.setRequestHandler('tools/list', async () => ({
-  tools: [
-    {
-      name: 'memory_set',
-      description: 'Store a value in memory',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          key: { type: 'string', description: 'Key to store value under' },
-          value: { description: 'Value to store (any type)' }
-        },
-        required: ['key', 'value']
-      }
-    },
-    {
-      name: 'memory_get',
-      description: 'Retrieve a value from memory',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          key: { type: 'string', description: 'Key to retrieve value for' }
-        },
-        required: ['key']
-      }
-    },
-    {
-      name: 'memory_delete',
-      description: 'Delete a value from memory',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          key: { type: 'string', description: 'Key to delete' }
-        },
-        required: ['key']
-      }
-    },
-    {
-      name: 'memory_list',
-      description: 'List all keys in memory',
-      inputSchema: {
-        type: 'object',
-        properties: {}
-      }
-    },
-    {
-      name: 'memory_clear',
-      description: 'Clear all memory',
-      inputSchema: {
-        type: 'object',
-        properties: {}
-      }
-    }
-  ]
-}));
-
-server.setRequestHandler('tools/call', async (request) => {
-  const { name, arguments: args } = request.params;
-  
-  try {
-    let result;
-    
-    switch (name) {
-      case 'memory_set':
-        memoryStore[args.key] = args.value;
-        result = `Stored value for key: ${args.key}`;
-        break;
-        
-      case 'memory_get':
-        if (args.key in memoryStore) {
-          result = JSON.stringify(memoryStore[args.key]);
-        } else {
-          result = `Key not found: ${args.key}`;
-        }
-        break;
-        
-      case 'memory_delete':
-        if (args.key in memoryStore) {
-          delete memoryStore[args.key];
-          result = `Deleted key: ${args.key}`;
-        } else {
-          result = `Key not found: ${args.key}`;
-        }
-        break;
-        
-      case 'memory_list':
-        result = `Keys in memory: ${Object.keys(memoryStore).join(', ')}`;
-        break;
-        
-      case 'memory_clear':
-        memoryStore = {};
-        result = 'Memory cleared';
-        break;
-        
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
-    
-    return {
-      content: [{
-        type: 'text',
-        text: result
-      }]
-    };
-  } catch (error) {
-    return {
-      content: [{
-        type: 'text',
-        text: `Error: ${error.message}`
-      }],
-      isError: true
-    };
-  }
+// Create MCP server instance
+const server = new McpServer({
+  name: 'memory-server',
+  version: '1.0.0',
 });
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error('Memory MCP server running on stdio');
+// Auto-save every 5 seconds
+setInterval(saveMemory, 5000);
+
+// Add memory tools using the new SDK API
+server.tool(
+  'memory_set',
+  {
+    key: z.string().describe('Key to store value under'),
+    value: z.any().describe('Value to store (any type)'),
+  },
+  async ({ key, value }) => {
+    memoryStore[key] = value;
+    await saveMemory();
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Stored value for key: ${key}`,
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  'memory_get',
+  {
+    key: z.string().describe('Key to retrieve value for'),
+  },
+  async ({ key }) => {
+    if (key in memoryStore) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(memoryStore[key]),
+          },
+        ],
+      };
+    } else {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Key not found: ${key}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'memory_delete',
+  {
+    key: z.string().describe('Key to delete'),
+  },
+  async ({ key }) => {
+    if (key in memoryStore) {
+      delete memoryStore[key];
+      await saveMemory();
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Deleted key: ${key}`,
+          },
+        ],
+      };
+    } else {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Key not found: ${key}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.tool(
+  'memory_list',
+  {},
+  async () => {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Keys in memory: ${Object.keys(memoryStore).join(', ')}`,
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  'memory_clear',
+  {},
+  async () => {
+    memoryStore = {};
+    await saveMemory();
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Memory cleared',
+        },
+      ],
+    };
+  }
+);
+
+async function runServer() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('Memory MCP server running on stdio');
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runServer().catch(console.error);
+}
