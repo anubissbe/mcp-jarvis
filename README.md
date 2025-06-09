@@ -1,5 +1,10 @@
 # MCP Jarvis - Enhanced AI Assistant Capabilities
 
+[![CI](https://github.com/anubissbe/mcp-jarvis/actions/workflows/ci.yml/badge.svg)](https://github.com/anubissbe/mcp-jarvis/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
+
 A comprehensive collection of Model Context Protocol (MCP) servers that extend AI assistants (Claude, GitHub Copilot, Cursor) with filesystem access, web requests, database operations, browser automation, and more.
 
 ## 🚀 Features
