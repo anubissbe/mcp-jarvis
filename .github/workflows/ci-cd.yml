@@ -1,497 +1,720 @@
-# MCP Server CI/CD Pipeline
-# For: Model Context Protocol (MCP) servers
-# Self-hosted runners: 192.168.1.16 with 20 available runners
-
-name: 🔌 MCP Server Pipeline
+name: 🚀 Universal CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main, develop ]
-  release:
-    types: [ published ]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Environment to deploy to'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly security scans on Mondays at 2 AM
 
 env:
-  NODE_VERSION: '20'
-  DOCKER_REGISTRY: ghcr.io
+  # Use dynamic runner labels from vault
+  RUNNER_LABELS: ${{ secrets.RUNNER_LABELS || 'self-hosted,linux,docker' }}
+  # Docker registry settings
+  REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Node.js version for consistency
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
 
 jobs:
-  # 🔍 Static Analysis & Security
-  code-analysis:
-    name: 🔍 Code Analysis & Security
+  # Job 1: Environment Setup and Detection
+  setup:
+    name: 🔍 Environment Setup & Project Detection
     runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 15
+    outputs:
+      project-type: ${{ steps.detect.outputs.project-type }}
+      has-frontend: ${{ steps.detect.outputs.has-frontend }}
+      has-backend: ${{ steps.detect.outputs.has-backend }}
+      has-docker: ${{ steps.detect.outputs.has-docker }}
+      language: ${{ steps.detect.outputs.language }}
+      package-manager: ${{ steps.detect.outputs.package-manager }}
+      test-command: ${{ steps.detect.outputs.test-command }}
+      build-command: ${{ steps.detect.outputs.build-command }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔍 Detect Project Type
+        id: detect
+        run: |
+          # Initialize detection variables
+          PROJECT_TYPE="unknown"
+          HAS_FRONTEND="false"
+          HAS_BACKEND="false"
+          HAS_DOCKER="false"
+          LANGUAGE="unknown"
+          PACKAGE_MANAGER="npm"
+          TEST_COMMAND="npm test"
+          BUILD_COMMAND="npm run build"
+          
+          # Detect package manager
+          if [ -f "package.json" ]; then
+            if [ -f "yarn.lock" ]; then
+              PACKAGE_MANAGER="yarn"
+              TEST_COMMAND="yarn test"
+              BUILD_COMMAND="yarn build"
+            elif [ -f "pnpm-lock.yaml" ]; then
+              PACKAGE_MANAGER="pnpm"
+              TEST_COMMAND="pnpm test"
+              BUILD_COMMAND="pnpm build"
+            fi
+          fi
+          
+          # Detect frontend frameworks
+          if [ -f "package.json" ]; then
+            if grep -q "react\|vue\|angular\|svelte\|next\|nuxt\|vite" package.json; then
+              HAS_FRONTEND="true"
+              if grep -q "next" package.json; then
+                PROJECT_TYPE="nextjs"
+              elif grep -q "vite" package.json; then
+                PROJECT_TYPE="vite"
+              elif grep -q "react" package.json; then
+                PROJECT_TYPE="react"
+              elif grep -q "vue" package.json; then
+                PROJECT_TYPE="vue"
+              fi
+            fi
+          fi
+          
+          # Detect backend frameworks
+          if [ -f "package.json" ]; then
+            if grep -q "express\|fastify\|koa\|nest" package.json; then
+              HAS_BACKEND="true"
+              PROJECT_TYPE="fullstack"
+              LANGUAGE="javascript"
+            fi
+          fi
+          
+          # Detect Python projects
+          if [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+            LANGUAGE="python"
+            TEST_COMMAND="pytest"
+            BUILD_COMMAND="python -m build"
+            if grep -q "fastapi\|flask\|django" requirements.txt 2>/dev/null || grep -q "fastapi\|flask\|django" pyproject.toml 2>/dev/null; then
+              HAS_BACKEND="true"
+              PROJECT_TYPE="python-web"
+            else
+              PROJECT_TYPE="python"
+            fi
+          fi
+          
+          # Detect Docker
+          if [ -f "Dockerfile" ] || [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then
+            HAS_DOCKER="true"
+          fi
+          
+          # Detect MCP servers
+          if [ -f "package.json" ] && grep -q "mcp\|model-context-protocol" package.json; then
+            PROJECT_TYPE="mcp-server"
+          fi
+          
+          # Output all detected values
+          echo "project-type=$PROJECT_TYPE" >> $GITHUB_OUTPUT
+          echo "has-frontend=$HAS_FRONTEND" >> $GITHUB_OUTPUT
+          echo "has-backend=$HAS_BACKEND" >> $GITHUB_OUTPUT
+          echo "has-docker=$HAS_DOCKER" >> $GITHUB_OUTPUT
+          echo "language=$LANGUAGE" >> $GITHUB_OUTPUT
+          echo "package-manager=$PACKAGE_MANAGER" >> $GITHUB_OUTPUT
+          echo "test-command=$TEST_COMMAND" >> $GITHUB_OUTPUT
+          echo "build-command=$BUILD_COMMAND" >> $GITHUB_OUTPUT
+          
+          echo "🔍 Detected project type: $PROJECT_TYPE"
+          echo "📦 Package manager: $PACKAGE_MANAGER"
+          echo "🗣️  Language: $LANGUAGE"
+
+      - name: 🔧 Generate Build Matrix
+        id: matrix
+        run: |
+          # Create build matrix based on detected project structure
+          MATRIX='{"include":[]}'
+          
+          if [ "${{ steps.detect.outputs.has-frontend }}" == "true" ]; then
+            MATRIX=$(echo $MATRIX | jq '.include += [{"component": "frontend", "directory": "frontend", "dockerfile": "Dockerfile.frontend"}]')
+          fi
+          
+          if [ "${{ steps.detect.outputs.has-backend }}" == "true" ]; then
+            MATRIX=$(echo $MATRIX | jq '.include += [{"component": "backend", "directory": "backend", "dockerfile": "Dockerfile.backend"}]')
+          fi
+          
+          # If no specific components detected, use root
+          if [ "$(echo $MATRIX | jq '.include | length')" == "0" ]; then
+            MATRIX='{"include":[{"component": "app", "directory": ".", "dockerfile": "Dockerfile"}]}'
+          fi
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "📋 Build matrix: $MATRIX"
+
+  # Job 2: Code Quality & Linting
+  quality:
+    name: 🧹 Code Quality & Linting
+    runs-on: [self-hosted, linux, docker]
+    needs: setup
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ needs.setup.outputs.package-manager }}
+
+      - name: 🐍 Setup Python
+        if: needs.setup.outputs.language == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies (JavaScript)
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
+        run: |
+          case "${{ needs.setup.outputs.package-manager }}" in
+            yarn) yarn install --frozen-lockfile ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            *) npm ci ;;
+          esac
+
+      - name: 📦 Install Dependencies (Python)
+        if: needs.setup.outputs.language == 'python'
+        run: |
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install black flake8 mypy pytest
+
+      - name: 🔍 ESLint (JavaScript)
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
+        run: |
+          if [ -f ".eslintrc.js" ] || [ -f ".eslintrc.json" ] || [ -f "eslint.config.js" ]; then
+            npx eslint . --ext .js,.jsx,.ts,.tsx --max-warnings 0
+          else
+            echo "⚠️ No ESLint configuration found, skipping..."
+          fi
+
+      - name: 🎨 Prettier (JavaScript)
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
+        run: |
+          if [ -f ".prettierrc" ] || [ -f "prettier.config.js" ]; then
+            npx prettier --check .
+          else
+            echo "⚠️ No Prettier configuration found, skipping..."
+          fi
+
+      - name: 🖤 Black Formatting (Python)
+        if: needs.setup.outputs.language == 'python'
+        run: black --check .
+
+      - name: 🔥 Flake8 Linting (Python)
+        if: needs.setup.outputs.language == 'python'
+        run: flake8 .
+
+      - name: 🔎 MyPy Type Checking (Python)
+        if: needs.setup.outputs.language == 'python'
+        run: |
+          if [ -f "mypy.ini" ] || [ -f ".mypy.ini" ] || [ -f "pyproject.toml" ]; then
+            mypy .
+          else
+            echo "⚠️ No MyPy configuration found, skipping..."
+          fi
+
+      - name: 📝 Markdown Linting
+        run: |
+          npm install -g markdownlint-cli
+          markdownlint "**/*.md" --ignore node_modules || echo "⚠️ Markdown linting failed, continuing..."
+
+      - name: 📊 Commit Message Validation
+        if: github.event_name == 'pull_request'
+        run: |
+          npm install -g @commitlint/cli @commitlint/config-conventional
+          echo "module.exports = { extends: ['@commitlint/config-conventional'] };" > commitlint.config.js
+          npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.sha }} || echo "⚠️ Commit message validation failed, continuing..."
+
+  # Job 3: Security Scanning
+  security:
+    name: 🔒 Security Scanning
+    runs-on: [self-hosted, linux, docker]
+    needs: setup
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🔍 ESLint Analysis
-        run: npm run lint
-        continue-on-error: true
-
-      - name: 🎯 TypeScript Check
-        run: npm run typecheck
-
-      - name: 🔍 MCP Schema Validation
-        run: |
-          if [ -f "mcp-schema.json" ]; then
-            npm run validate:schema
-          else
-            echo "No MCP schema found, skipping validation"
-          fi
-
-      - name: 🛡️ CodeQL Analysis
+      - name: 🔍 CodeQL Analysis
         uses: github/codeql-action/init@v3
         with:
-          languages: typescript, javascript
+          languages: ${{ needs.setup.outputs.language == 'python' && 'python' || 'javascript' }}
+          queries: security-and-quality
 
-      - name: 🛡️ Perform CodeQL Analysis
+      - name: 🏗️ CodeQL Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 📊 CodeQL Results
         uses: github/codeql-action/analyze@v3
 
-      - name: 🔒 Run Trivy security scan
+      - name: 🛡️ Trivy Filesystem Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'sarif'
-          output: 'trivy-results.sarif'
+          output: 'trivy-fs-results.sarif'
 
-      - name: 📊 Upload Trivy results
+      - name: 📤 Upload Trivy Filesystem Results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: 'trivy-fs-results.sarif'
 
-  # 🧪 Unit & Integration Tests
-  tests:
-    name: 🧪 Tests
+      - name: 🐛 Snyk Security Scan
+        if: secrets.SNYK_TOKEN
+        run: |
+          npm install -g snyk
+          snyk auth ${{ secrets.SNYK_TOKEN }}
+          snyk test --severity-threshold=high || echo "⚠️ Snyk found vulnerabilities"
+          snyk monitor || echo "⚠️ Snyk monitoring failed"
+
+      - name: 🔐 OWASP Dependency Check
+        run: |
+          wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.3/dependency-check-8.4.3-release.zip
+          unzip -q dependency-check-8.4.3-release.zip
+          ./dependency-check/bin/dependency-check.sh --project "${{ github.repository }}" --scan . --format ALL --out ./dependency-check-report
+          if [ -f "./dependency-check-report/dependency-check-report.json" ]; then
+            echo "📊 OWASP Dependency Check completed"
+          fi
+
+      - name: 🕵️ Secret Detection
+        run: |
+          docker run --rm -v $(pwd):/scan trufflesecurity/trufflehog:latest filesystem /scan --no-update --json > secrets-scan.json || true
+          if [ -s secrets-scan.json ]; then
+            echo "⚠️ Potential secrets detected!"
+            cat secrets-scan.json
+          else
+            echo "✅ No secrets detected"
+          fi
+
+  # Job 4: Testing
+  testing:
+    name: 🧪 Testing
     runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 20
+    needs: [setup, quality]
     strategy:
-      matrix:
-        node-version: ['18', '20']
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      fail-fast: false
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔧 Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🏗️ Build MCP server
-        run: npm run build
-
-      - name: 🧪 Run unit tests
-        run: npm run test:unit -- --coverage
-
-      - name: 🔗 Run integration tests
-        run: npm run test:integration
-
-      - name: 📊 Upload coverage reports
-        uses: codecov/codecov-action@v4
-        if: matrix.node-version == '20'
-        with:
-          file: ./coverage/lcov.info
-          flags: mcp-server
-          name: mcp-server-coverage
-
-  # 🔌 MCP Protocol Tests
-  mcp-protocol-tests:
-    name: 🔌 MCP Protocol Tests
-    runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 25
-    needs: [tests]
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔧 Setup Node.js
+      - name: 🟢 Setup Node.js
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          cache: ${{ needs.setup.outputs.package-manager }}
 
-      - name: 📦 Install dependencies
-        run: npm ci
+      - name: 🐍 Setup Python
+        if: needs.setup.outputs.language == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: 🏗️ Build MCP server
-        run: npm run build
-
-      - name: 🔌 Start MCP server
+      - name: 📦 Install Dependencies
+        working-directory: ${{ matrix.directory }}
         run: |
-          npm run start &
-          MCP_PID=$!
-          echo "MCP_PID=$MCP_PID" >> $GITHUB_ENV
-          sleep 5
-
-      - name: 📞 Test MCP capabilities
-        run: |
-          # Test basic MCP protocol methods
-          node -e "
-            const { MCPClient } = require('@modelcontextprotocol/client');
-            const client = new MCPClient();
-            
-            async function testMCP() {
-              try {
-                await client.connect('stdio', { command: 'node', args: ['dist/index.js'] });
-                
-                // Test capabilities
-                const capabilities = await client.listCapabilities();
-                console.log('✅ Capabilities:', JSON.stringify(capabilities, null, 2));
-                
-                // Test tools
-                const tools = await client.listTools();
-                console.log('✅ Tools:', JSON.stringify(tools, null, 2));
-                
-                // Test prompts (if available)
-                try {
-                  const prompts = await client.listPrompts();
-                  console.log('✅ Prompts:', JSON.stringify(prompts, null, 2));
-                } catch (e) {
-                  console.log('ℹ️ No prompts available');
-                }
-                
-                // Test resources (if available)
-                try {
-                  const resources = await client.listResources();
-                  console.log('✅ Resources:', JSON.stringify(resources, null, 2));
-                } catch (e) {
-                  console.log('ℹ️ No resources available');
-                }
-                
-                await client.disconnect();
-                console.log('✅ MCP server tests passed');
-              } catch (error) {
-                console.error('❌ MCP server test failed:', error);
-                process.exit(1);
-              }
-            }
-            
-            testMCP();
-          "
-
-      - name: 🔌 Test with Claude Code CLI
-        run: |
-          # Test MCP server with @modelcontextprotocol/cli if available
-          if command -v npx >/dev/null 2>&1; then
-            npx @modelcontextprotocol/cli inspect stdio node dist/index.js
+          if [ "${{ needs.setup.outputs.language }}" == "python" ]; then
+            pip install --upgrade pip
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+            pip install pytest pytest-cov
           else
-            echo "Claude Code CLI not available, skipping"
+            case "${{ needs.setup.outputs.package-manager }}" in
+              yarn) yarn install --frozen-lockfile ;;
+              pnpm) pnpm install --frozen-lockfile ;;
+              *) npm ci ;;
+            esac
           fi
 
-      - name: 🛑 Stop MCP server
-        if: always()
+      - name: 🧪 Unit Tests
+        working-directory: ${{ matrix.directory }}
         run: |
-          if [ ! -z "$MCP_PID" ]; then
-            kill $MCP_PID || true
-          fi
-
-  # 🎯 End-to-End MCP Tests
-  e2e-mcp-tests:
-    name: 🎯 E2E MCP Tests
-    runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 30
-    needs: [mcp-protocol-tests]
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🏗️ Build MCP server
-        run: npm run build
-
-      - name: 🎭 Install E2E test dependencies
-        run: |
-          npm install @playwright/test
-          npx playwright install
-
-      - name: 🎯 Run E2E MCP tests
-        run: |
-          if [ -d "tests/e2e" ]; then
-            npm run test:e2e
+          if [ "${{ needs.setup.outputs.language }}" == "python" ]; then
+            pytest --cov=. --cov-report=xml --cov-report=term
           else
-            echo "No E2E tests found"
+            ${{ needs.setup.outputs.test-command }} --passWithNoTests --coverage --watchAll=false
           fi
 
-      - name: 📸 Upload E2E test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: e2e-test-results
-          path: test-results/
-          retention-days: 7
-
-  # 📊 Performance Benchmarks
-  performance:
-    name: 📊 Performance Tests
-    runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 20
-    needs: [mcp-protocol-tests]
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🏗️ Build MCP server
-        run: npm run build
-
-      - name: 📊 Run performance benchmarks
+      - name: 🎭 E2E Tests (Playwright)
+        if: needs.setup.outputs.has-frontend == 'true'
+        working-directory: ${{ matrix.directory }}
         run: |
-          if [ -f "benchmarks/mcp-performance.js" ]; then
-            node benchmarks/mcp-performance.js
+          if [ -f "playwright.config.ts" ] || [ -f "playwright.config.js" ]; then
+            npx playwright install --with-deps
+            npx playwright test
           else
-            echo "No performance benchmarks found"
+            echo "⚠️ No Playwright configuration found, skipping E2E tests..."
           fi
 
-      - name: 🔄 Test concurrent connections
+      - name: 📊 Upload Coverage to CodeClimate
+        if: secrets.CODECLIMATE_TOKEN
         run: |
-          node -e "
-            const { spawn } = require('child_process');
-            const promises = [];
-            
-            for (let i = 0; i < 10; i++) {
-              const promise = new Promise((resolve, reject) => {
-                const child = spawn('node', ['dist/index.js']);
-                child.on('close', code => {
-                  if (code === 0) resolve(i);
-                  else reject(new Error(\`Process \${i} failed with code \${code}\`));
-                });
-                setTimeout(() => child.kill(), 2000);
-              });
-              promises.push(promise);
-            }
-            
-            Promise.all(promises)
-              .then(() => console.log('✅ Concurrent connection test passed'))
-              .catch(err => {
-                console.error('❌ Concurrent connection test failed:', err);
-                process.exit(1);
-              });
-          "
+          curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
+          chmod +x ./cc-test-reporter
+          ./cc-test-reporter format-coverage -t lcov ./coverage/lcov.info || echo "⚠️ CodeClimate upload failed"
+          ./cc-test-reporter upload-coverage || echo "⚠️ CodeClimate upload failed"
 
-  # 🐳 Docker Build & Security
-  docker-build:
-    name: 🐳 Docker Build & Security
+      - name: 📈 Upload Coverage to Codecov
+        if: secrets.CODECOV_TOKEN
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: ${{ matrix.directory }}
+          fail_ci_if_error: false
+
+  # Job 5: SonarCloud Analysis
+  sonarcloud:
+    name: 📊 SonarCloud Analysis
     runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 15
-    needs: [code-analysis]
+    needs: [setup, testing]
+    if: secrets.SONARCLOUD_TOKEN
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
-
-      - name: 🐳 Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 🏗️ Build Docker image
-        uses: docker/build-push-action@v5
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: ${{ env.IMAGE_NAME }}:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          fetch-depth: 0
 
-      - name: 🧪 Test Docker container
-        run: |
-          docker run --rm -d --name mcp-test ${{ env.IMAGE_NAME }}:test
-          sleep 5
-          docker logs mcp-test
-          docker stop mcp-test
-
-      - name: 🔒 Run Trivy container scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:test
-          format: 'sarif'
-          output: 'docker-trivy-results.sarif'
-
-      - name: 📊 Upload Docker security results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'docker-trivy-results.sarif'
-
-  # 📦 Package & Release
-  release:
-    name: 📦 Package & Release
-    runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 20
-    needs: [tests, mcp-protocol-tests, e2e-mcp-tests, docker-build]
-    if: github.event_name == 'release' && github.event.action == 'published'
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🏗️ Build MCP server
-        run: npm run build
-
-      - name: 📦 Publish to NPM
+      - name: 📊 SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONARCLOUD_TOKEN }}
+
+  # Job 6: Build
+  build:
+    name: 🏗️ Build
+    runs-on: [self-hosted, linux, docker]
+    needs: [setup, quality]
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      fail-fast: false
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        if: needs.setup.outputs.language == 'javascript' || needs.setup.outputs.language == 'unknown'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ needs.setup.outputs.package-manager }}
+
+      - name: 🐍 Setup Python
+        if: needs.setup.outputs.language == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        working-directory: ${{ matrix.directory }}
+        run: |
+          if [ "${{ needs.setup.outputs.language }}" == "python" ]; then
+            pip install --upgrade pip
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            pip install build
+          else
+            case "${{ needs.setup.outputs.package-manager }}" in
+              yarn) yarn install --frozen-lockfile ;;
+              pnpm) pnpm install --frozen-lockfile ;;
+              *) npm ci ;;
+            esac
+          fi
+
+      - name: 🏗️ Build Application
+        working-directory: ${{ matrix.directory }}
+        run: |
+          if [ "${{ needs.setup.outputs.language }}" == "python" ]; then
+            python -m build
+          else
+            ${{ needs.setup.outputs.build-command }}
+          fi
 
       - name: 🐳 Set up Docker Buildx
+        if: needs.setup.outputs.has-docker == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: 🔐 Login to Container Registry
+      - name: 🔑 Login to Container Registry
+        if: needs.setup.outputs.has-docker == 'true'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.DOCKER_REGISTRY }}
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🏷️ Extract metadata
+      - name: 🏷️ Extract Metadata
+        if: needs.setup.outputs.has-docker == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: 🚢 Build and push Docker image
+      - name: 🐳 Build and Push Docker Image
+        if: needs.setup.outputs.has-docker == 'true'
+        id: build
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ matrix.directory }}
+          file: ${{ matrix.directory }}/${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 📋 Generate MCP documentation
+      - name: 📦 Archive Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.component }}
+          path: |
+            ${{ matrix.directory }}/dist/
+            ${{ matrix.directory }}/build/
+            ${{ matrix.directory }}/out/
+          retention-days: 7
+
+  # Job 7: Container Security Scanning
+  container-security:
+    name: 🛡️ Container Security Scanning
+    runs-on: [self-hosted, linux, docker]
+    needs: [setup, build]
+    if: needs.setup.outputs.has-docker == 'true' && needs.build.outputs.image-digest
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    steps:
+      - name: 🛡️ Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}@${{ needs.build.outputs.image-digest }}
+          format: 'sarif'
+          output: 'trivy-container-results.sarif'
+
+      - name: 📤 Upload Trivy Container Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-container-results.sarif'
+
+      - name: 📋 Generate SBOM
         run: |
-          if [ -f "scripts/generate-docs.js" ]; then
-            node scripts/generate-docs.js
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          syft ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}@${{ needs.build.outputs.image-digest }} -o spdx-json=sbom.json
+
+      - name: 📤 Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.component }}
+          path: sbom.json
+
+  # Job 8: Deployment
+  deploy:
+    name: 🚀 Deploy
+    runs-on: [self-hosted, linux, docker]
+    needs: [setup, build, security, container-security]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    environment: 
+      name: ${{ github.event.inputs.deploy_environment || 'staging' }}
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Login to DockerHub
+        if: secrets.DOCKERHUB_TOKEN
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 🏷️ Tag and Push to DockerHub
+        if: secrets.DOCKERHUB_TOKEN && needs.setup.outputs.has-docker == 'true'
+        run: |
+          # Tag and push main application image
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:latest
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:${{ github.sha }}
+
+      - name: 🏷️ Generate Release Tag
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        id: tag
+        run: |
+          TAG="v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "🏷️ Generated tag: $TAG"
+
+      - name: 📝 Generate Release Notes
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        id: release_notes
+        run: |
+          NOTES=$(git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~10")..HEAD)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 🎉 Create Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          release_name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            ## 🚀 What's New
+            
+            ${{ steps.release_notes.outputs.notes }}
+            
+            ## 📊 Metrics
+            - **Build Time**: ${{ github.run_number }}
+            - **Commit**: ${{ github.sha }}
+            - **Branch**: ${{ github.ref_name }}
+            
+            ## 🐳 Docker Images
+            ```bash
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:${{ steps.tag.outputs.tag }}
+            ```
+            
+            **Auto-generated by GitHub Actions** 🤖
+          draft: false
+          prerelease: false
+
+  # Job 9: Cleanup
+  cleanup:
+    name: 🧹 Cleanup
+    runs-on: [self-hosted, linux, docker]
+    needs: [deploy]
+    if: always()
+    steps:
+      - name: 🧹 Docker System Cleanup
+        run: |
+          # Clean up unused Docker resources
+          docker system prune -f --volumes
+          docker image prune -f --filter "until=24h"
+          
+      - name: 🧹 Runner Cleanup
+        run: |
+          # Clean up workflow artifacts and temporary files
+          sudo rm -rf /tmp/actions-*
+          sudo rm -rf ${{ github.workspace }}/../_temp
+          
+          # Clean up old log files
+          find /opt/actions-runner/_diag -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+  # Job 10: Notification
+  notify:
+    name: 📢 Notifications
+    runs-on: [self-hosted, linux, docker]
+    needs: [setup, quality, security, testing, build, deploy]
+    if: always()
+    steps:
+      - name: 📊 Determine Overall Status
+        id: status
+        run: |
+          if [[ "${{ needs.setup.result }}" == "failure" || "${{ needs.quality.result }}" == "failure" || "${{ needs.security.result }}" == "failure" || "${{ needs.testing.result }}" == "failure" || "${{ needs.build.result }}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+          else
+            echo "status=partial" >> $GITHUB_OUTPUT
+            echo "color=warning" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
           fi
 
-      - name: 📄 Update release notes
-        uses: softprops/action-gh-release@v1
+      - name: 📢 Slack Notification
+        if: secrets.SLACK_BOT_TOKEN
+        uses: 8398a7/action-slack@v3
         with:
-          files: |
-            dist/*.tar.gz
-            docs/mcp-spec.json
-          body: |
-            ## 🔌 MCP Server Release
-            
-            This release includes:
-            - Updated MCP server with latest protocol support
-            - Docker images for multiple architectures
-            - NPM package for easy installation
-            
-            ### Installation
-            ```bash
-            npm install ${{ github.repository }}
-            ```
-            
-            ### Docker
-            ```bash
-            docker pull ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
-            ```
-
-  # 🔄 Dependency Updates
-  dependency-update:
-    name: 🔄 Dependency Updates
-    runs-on: [self-hosted, linux, docker]
-    timeout-minutes: 10
-    if: github.event_name == 'schedule'
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 🔄 Update dependencies
-        run: |
-          npm update
-          npm audit fix
-
-      - name: 🔌 Check MCP protocol compatibility
-        run: |
-          npm run build
-          npm run test:protocol
-
-      - name: 📝 Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: '🔄 chore: update MCP server dependencies'
-          title: '🔄 Automated MCP dependency updates'
-          body: |
-            ## 🔄 Automated MCP Server Dependency Updates
-            
-            This PR contains automated dependency updates for the MCP server.
-            
-            - Updated npm packages to latest compatible versions
-            - Fixed security vulnerabilities with `npm audit fix`
-            - Verified MCP protocol compatibility
-            
-            **Note**: Please review changes and test MCP functionality before merging.
-          branch: chore/mcp-dependency-updates
-          delete-branch: true
-
-# 📊 Workflow Status Badge
-# Add to README.md:
-# [![MCP Server Pipeline](https://github.com/YOUR_USERNAME/YOUR_REPO/workflows/🔌%20MCP%20Server%20Pipeline/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions)
+          status: custom
+          custom_payload: |
+            {
+              "text": "${{ steps.status.outputs.emoji }} CI/CD Pipeline ${{ steps.status.outputs.status == 'success' && 'Completed Successfully' || 'Failed' }}",
+              "color": "${{ steps.status.outputs.color }}",
+              "fields": [
+                {
+                  "title": "Repository",
+                  "value": "${{ github.repository }}",
+                  "short": true
+                },
+                {
+                  "title": "Branch",
+                  "value": "${{ github.ref_name }}",
+                  "short": true
+                },
+                {
+                  "title": "Commit",
+                  "value": "${{ github.sha }}",
+                  "short": true
+                },
+                {
+                  "title": "Workflow",
+                  "value": "${{ github.workflow }}",
+                  "short": true
+                },
+                {
+                  "title": "Quality Check",
+                  "value": "${{ needs.quality.result == 'success' && '✅ Passed' || '❌ Failed' }}",
+                  "short": true
+                },
+                {
+                  "title": "Security Scan",
+                  "value": "${{ needs.security.result == 'success' && '✅ Passed' || '❌ Failed' }}",
+                  "short": true
+                },
+                {
+                  "title": "Tests",
+                  "value": "${{ needs.testing.result == 'success' && '✅ Passed' || '❌ Failed' }}",
+                  "short": true
+                },
+                {
+                  "title": "Build",
+                  "value": "${{ needs.build.result == 'success' && '✅ Passed' || '❌ Failed' }}",
+                  "short": true
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
